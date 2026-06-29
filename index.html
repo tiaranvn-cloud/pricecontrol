@@ -129,7 +129,9 @@ tr:hover td{background:#f9f9f9}
 <div class="wrap">
   <div class="header">
     <div class="brand">BEIVZ <span>PRICE CONTROL</span></div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap">
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+      <button class="btn btn-ghost btn-sm" id="gs-btn" onclick="gsSyncFull()" title="Backup & restore via Google Sheets">☁ Sheets</button>
+      <button class="btn btn-ghost btn-sm" onclick="gsRestore()" title="Restore dari Google Sheets">↓ Restore</button>
       <button class="btn btn-ghost btn-sm" onclick="exportData()">↓ Export</button>
       <button class="btn btn-ghost btn-sm" onclick="document.getElementById('import-file').click()">↑ Import</button>
       <input type="file" id="import-file" accept=".json" style="display:none" onchange="importData(event)">
@@ -975,6 +977,71 @@ function bulkDelete(type){
   if(type==='resep'){db.resep=db.resep.filter(function(r){return!selectedIds.resep.has(r.id)});snapshotHPP();saveDB();selectedIds.resep=new Set();renderResep();renderHPP();toast(n+' resep dihapus')}
   updateBulkBar(type);
 }
+
+// ── GOOGLE SHEETS SYNC ───────────────────────────────────────────────────────
+var GS_URL='https://script.google.com/macros/s/AKfycbxNZ4GhoeoL26CuUyT1XCmWG2Hj_pl7uPQfABN5K7qNVMwdcOxzrintR9BJanMKY5pF/exec';
+var GS_LAST_KEY='beivz_pc_gs_last';
+
+function gsSetBtn(state){
+  var btn=document.getElementById('gs-btn');
+  if(!btn)return;
+  if(state==='loading'){btn.textContent='⏳ Menyimpan...';btn.disabled=true}
+  else if(state==='ok'){btn.textContent='☁ Tersimpan ✓';btn.disabled=false;setTimeout(function(){btn.textContent='☁ Sheets';},2500)}
+  else if(state==='err'){btn.textContent='⚠ Gagal';btn.disabled=false;setTimeout(function(){btn.textContent='☁ Sheets';},3000)}
+  else{btn.textContent='☁ Sheets';btn.disabled=false}
+}
+
+function gsSyncFull(){
+  gsSetBtn('loading');
+  var payload=JSON.stringify(db);
+  fetch(GS_URL,{method:'POST',body:payload})
+    .then(function(r){return r.json()})
+    .then(function(res){
+      if(res.ok){
+        localStorage.setItem(GS_LAST_KEY,new Date().toISOString());
+        gsSetBtn('ok');
+        toast('☁ Backup ke Sheets berhasil ✓');
+      } else {
+        gsSetBtn('err');
+        toast('Sheets error: '+(res.error||'unknown'));
+      }
+    })
+    .catch(function(e){
+      gsSetBtn('err');
+      toast('Gagal konek ke Sheets. Cek internet/CORS.');
+    });
+}
+
+function gsRestore(){
+  if(!confirm('Restore data dari Google Sheets?\nData lokal akan DIGANTI dengan data dari Sheets.'))return;
+  var btn=document.getElementById('gs-btn');
+  toast('⏳ Mengambil data dari Sheets...');
+  fetch(GS_URL)
+    .then(function(r){return r.json()})
+    .then(function(res){
+      if(res.ok&&res.data){
+        var p=res.data;
+        db=Object.assign({skus:[],bahan:[],packaging:[],resep:[],history:[],hjSaved:{},marginTarget:{},settings:{feeShopee:6,feeTiktok:6,feeLazada:5,marginDefault:30}},p);
+        db.settings=Object.assign({feeShopee:6,feeTiktok:6,feeLazada:5,marginDefault:30},p.settings||{});
+        saveDB();snapshotHPP();loadSettingsUI();updateFeeStrip();renderHPP();renderBahan();renderPackaging();renderResep();renderHistory();
+        toast('✓ Data berhasil di-restore dari Sheets');
+      } else {
+        toast('Belum ada backup di Sheets, atau terjadi error.');
+      }
+    })
+    .catch(function(e){
+      toast('Gagal konek ke Sheets. Cek internet.');
+    });
+}
+
+// Auto-backup setiap ada perubahan (debounced, 10 detik setelah save terakhir)
+var gsAutoTimer=null;
+var _origSaveDB=saveDB;
+saveDB=function(){
+  _origSaveDB();
+  clearTimeout(gsAutoTimer);
+  gsAutoTimer=setTimeout(gsSyncFull,10000);
+};
 
 // ── INIT ─────────────────────────────────────────────────────────────────────
 loadDB();seed();snapshotHPP();updateFeeStrip();renderHPP();
